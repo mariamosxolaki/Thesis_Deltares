@@ -1,136 +1,174 @@
+Map.centerObject(poly);
 var region = Map.getBounds(true)
 
 // Load Sentinel 2 TOA image.
-var images = ee.ImageCollection('COPERNICUS/S2').filterDate('2015-07-01','2020-03-25').filterBounds(poly);
-
-function addQualityScore(images, region, options) {
-  var scorePercentile = (options && options.percentile) || 75
-  var scale = (options && options.scale) || 500
-  var mask = (options && options.mask) || null
-  var qualityBand = (options && options.qualityBand) || 'B3'// ?????
-
-  return images
-    .map(function(i) { 
-      var score = i.select(qualityBand) //.where(i.select('green').gt(0.5), 0.5)
-
-      if(mask) {
-        score = score.updateMask(mask)
-      }
-
-      score = score        
-        .reduceRegion(ee.Reducer.percentile([scorePercentile]), region, scale).values().get(0)
-
-      // var score = i.select('green').add(i.select('blue'))
-      //  .reduceRegion(ee.Reducer.percentile([scorePercentile]), g, scale).values().get(0)
-
-      // var cloudScore = computeCloudScore(i)
-      // var score = cloudScore.gt(cloudThreshold)
-      //   .reduceRegion(ee.Reducer.sum(), g, scale).values().get(0)
-
-      return i.set({ quality_score: score })
-    })
-}
-
-
-
-function getMostlyCleanImages(images, region, options) {
-  region = ee.Geometry(region)
-  
-  var scale = (options && options.scale) || 500
-  var p = (options && options.percentile) || 85
-
-  // http://www.earthenv.org/cloud
-  var modisClouds = ee.Image('users/gena/MODCF_meanannual')
-  
-  var cloudFrequency = modisClouds.divide(10000).reduceRegion(
-    ee.Reducer.percentile([p]), 
-    region.buffer(10000, scale*10), scale*10).values().get(0)
-    
-  //print('Cloud frequency (over AOI):', cloudFrequency)
-  
-  // decrease cloudFrequency, include some more partially-cloudy images then clip based on a quality metric
-  // also assume inter-annual variability of the cloud cover
-  cloudFrequency = ee.Number(cloudFrequency).subtract(0.15).max(0.0)
-  
-  if(options && options.cloudFrequencyThresholdDelta) {
-    cloudFrequency = cloudFrequency.add(options.cloudFrequencyThresholdDelta)
-  }
-    
-
-
-  var images = images
-    .filterBounds(region)
-
-  var size = images.size()
-  
-  images = addQualityScore(images, region, options)
-    .filter(ee.Filter.gt('quality_score', 0)) // sometimes null?!
-
-  /*
-  var scoreMin = 0.01
-  var scoreMax = images.reduceColumns(ee.Reducer.percentile([ee.Number(1).subtract(cloudFrequency).multiply(100)]), ['score']).values().get(0)
-  
-  if(debug) {
-    printChart('Quality score:', ui.Chart.feature.histogram(images, 'score', 200))
-    print('scoreMax:', scoreMax)
-    print('size, all: ', size)
-  }
-  
-  // filter by quality score
-  // images = images
-  //   .filter(ee.Filter.and(ee.Filter.gte('score', scoreMin), ee.Filter.lte('score', scoreMax)))
-  */
-  
-  // clip collection
-  images = images.sort('quality_score')
-    .limit(images.size().multiply(ee.Number(1).subtract(cloudFrequency)).toInt())
-    
-  // remove too dark images
-  //images = images.sort('quality_score', false)
-    //.limit(images.size().multiply(0.99).toInt())
-  
-  //print('size, filtered: ', images.size())      
-
-  return images
-    //.set({scoreMax: scoreMax})
-}
-
-var myCollection = getMostlyCleanImages(images, region, {
-   cloudFrequencyThresholdDelta: 0.15 })
-
+var myCollection = ee.ImageCollection('COPERNICUS/S2').filterDate('2015-07-01','2020-03-25').filterBounds(poly);
 var listOfImages = myCollection.toList(myCollection.size());
-var first =ee.Image(listOfImages.get(0));
+var img =ee.Image(listOfImages.get(0));
 
-print(listOfImages.size())
+// Set variables
+var aoi = null;
+var analysisExtent = null;
+var debug = false;
+var resampleString = "bilinear";
+print(myCollection.first().propertyNames());
+var dateOfInterest = ('2015-07-01','2020-03-25');
+var scale = 10;
+var errorMargin = Map.getScale();
 
-//print(dataset.first().propertyNames());
 
-var rgbVis = {
-  min: 0.0,
-  max: 0.3,
-  bands: ['B4', 'B3', 'B2'],
+
+//Rescales to given ranges
+
+var rescale = function(img, exp, thresholds) {
+  return img.expression(exp, {img: img}).subtract(thresholds[0]).divide(thresholds[1] - thresholds[0]);
 };
-Map.addLayer(myCollection.median(), rgbVis, '');
-
-//var ndwi = image.mean().normalizedDifference(['green', 'nir'])
-var mndwi = first.normalizedDifference(['B3', 'B11'])
-
-var new_image=ee.Image(mndwi)
-
-var new_image = new_image.mask(new_image)
-
-var ndwiViz = {min: 0.5, max: 1, palette: ['00FFFF', '0000FF']};
-Map.addLayer(new_image, ndwiViz, 'MNDWI', false);
 
 
-function edges(img) {
-    var canny = ee.Algorithms.CannyEdgeDetector(img, 0.99, 0);
+// Cloudscore functions from ASTER check Gennas code
+function cloudScore (img) {
+    // Compute several indicators of cloudyness and take the minimum of them.
+    var score = ee.Image(1);
+    // Clouds are reasonably bright in the blue and cirrus bands.
+    score = score.min(rescale(img, 'img.B2', [0.1, 0.5]));
+    score = score.min(rescale(img, 'img.B1', [0.1, 0.3]));
+    score = score.min(rescale(img, 'img.B1 + img.B10', [0.15, 0.2]));
+    // Clouds are reasonably bright in all visible bands.
+    score = score.min(rescale(img, 'img.B4 + img.B3 + img.B2', [0.2, 0.8]));
+    //var ndsi = img.normalizedDifference(['red', 'swir']);
+    return score;
+    
+}
+
+
+
+function getEdge(mask) {
+    var canny = ee.Algorithms.CannyEdgeDetector(mask, 0.99, 0);
     return canny.mask(canny);
 }
 
-var water_edges = edges(new_image)
-Map.addLayer(water_edges, {min: 0, max: 1, palette: 'FF0000'}, 'edges');
 
-var bufferSize = 30 // in meters
-var edgeBuffer = water_edges.focal_max(bufferSize, 'square', 'meters'); 
-Map.addLayer(edgeBuffer.updateMask(edgeBuffer),{},'Buffered Edges');
+// Return the DN that maximizes interclass variance in B5 (in the region).
+var otsu = function otsu(histogram) {
+    histogram = ee.Dictionary(histogram);
+    var counts = ee.Array(histogram.get('histogram'));
+    var means = ee.Array(histogram.get('bucketMeans'));
+    var size = means.length().get([0]);
+    var total = counts.reduce(ee.Reducer.sum(), [0]).get([0]);
+    var sum = means.multiply(counts).reduce(ee.Reducer.sum(), [0]).get([0]);
+    var mean = sum.divide(total);
+    var indices = ee.List.sequence(1, size);
+    // Compute between sum of squares, where each mean partitions the data.
+    var bss = indices.map(function (i) {
+        var aCounts = counts.slice(0, 0, i);
+        var aCount = aCounts.reduce(ee.Reducer.sum(), [0]).get([0]);
+        var aMeans = means.slice(0, 0, i);
+        var aMean = aMeans.multiply(aCounts).reduce(ee.Reducer.sum(), [0]).get([0]).divide(aCount);
+        var bCount = total.subtract(aCount);
+        var bMean = sum.subtract(aCount.multiply(aMean)).divide(bCount);
+        return aCount.multiply(aMean.subtract(mean).pow(2)).add(bCount.multiply(bMean.subtract(mean).pow(2)));
+    });
+    // Return the mean value corresponding to the maximum BSS.
+    return means.sort(bss).get([-1]);
+};
+ 
+
+function computeThresholdUsingotsu(image, scale, bounds, th, g, skipShort, weightGradient, minValue) {
+    // clip image edges
+    var mask = image.mask().gt(0).focal_min(ee.Number(scale).multiply(3), 'circle', 'meters');
+    // detect sharp changes
+    var edge = ee.Algorithms.CannyEdgeDetector(image, th, g);
+    edge = edge.multiply(mask);
+    // take the largest changes, estimate gradient around edge and use that as a weight
+    if (weightGradient) {
+        var gradient = image.gradient().abs();
+        var edgeGradient = gradient.select(0).max(gradient.select(1)).mask(edge.gt(th)).reproject(image.projection().scale(2, 2));
+        // take the upper percentiles only
+        var mode = ee.Number(ee.Dictionary(edgeGradient.reduceRegion(ee.Reducer.mode(), bounds, scale)).values().get(0));
+        var σ = ee.Number(ee.Dictionary(edgeGradient.reduceRegion(ee.Reducer.stdDev(), bounds, scale)).values().get(0));
+        var _buckets = 50;
+        var significantEdgesMask = edgeGradient.gt(mode);
+        edge = edge.updateMask(significantEdgesMask);
+        if (debug) {
+            // gradient around edges
+            if (edgeGradient) {
+                print(ui.Chart.image.histogram(edgeGradient, bounds, scale, _buckets));
+                Map.addLayer(edgeGradient, {}, 'edge gradient', false);
+                Map.addLayer(significantEdgesMask.mask(significantEdgesMask), {}, 'significant edges', false);
+                print('Mode: ', mode);
+                print('Sigma: ', σ);
+                //Map.addLayer(edgeGradient.updateMask(significantEdgesMask), {min:0, max:mode.add(σ.multiply(2)), palette:['ffffff', 'ff0000']}, 'edge gradient, upper percentiles', false)
+            }
+        }
+    }
+    // advanced, detect edge lengths
+    var coonnectedVis = void 0;
+    if (skipShort) {
+        var connected = edge.mask(edge).lt(0.8).connectedPixelCount(50, true);
+        var edgeLong = connected.gte(50);
+        edge = edgeLong;
+        coonnectedVis = connected.updateMask(edgeLong).visualize({ palette: ['ffffff', 'ff0000'], min: 0, max: 50 });
+    }
+    // buffer around NDWI edges
+    var edgeBuffer = edge.focal_max(ee.Number(scale).multiply(1), 'square', 'meters');
+    var imageEdge = image.mask(edgeBuffer);
+    // compute threshold using Otsu thresholding
+    var buckets = 100;
+    var hist = ee.Dictionary(ee.Dictionary(imageEdge.reduceRegion(ee.Reducer.histogram(buckets), bounds, scale)).values().get(0));
+    var threshold = ee.Algorithms.If(hist.contains('bucketMeans'), otsu(hist), 0.3);
+    threshold = ee.Number(threshold); //.add(0.05)
+    if (debug) {
+        Map.addLayer(edge.mask(edge), { palette: ['ff0000'] }, 'edges', false);
+        if (skipShort) {
+            Map.addLayer(coonnectedVis, {}, 'edges (connected)', false);
+        }
+        print('Threshold: ', threshold);
+        print(ui.Chart.image.histogram(image, bounds, scale, buckets));
+        print(ui.Chart.image.histogram(imageEdge, bounds, scale, buckets));
+        Map.addLayer(mask.mask(mask), { palette: ['000000'] }, 'image mask', false);
+    }
+    return minValue ? threshold.max(minValue) : threshold;
+}
+
+
+
+//Detect water function
+function detectwater (img,returnImage) {
+    //img = img.unitScale(info.unitScale[0], info.unitScale[1]).copyProperties(img);
+    var image = ee.Image(img);
+    var clouds = cloudScore(image);
+    var waterScore = image.normalizedDifference(['B3', 'B5']);
+    var cloudThreshold = 0.1;
+    var cloudMask = clouds.gte(cloudThreshold);
+    var i = waterScore.updateMask(cloudMask.not()).clip(ee.Geometry(region));
+    var results = computeThresholdUsingotsu(i,30, aoi, 0.3, 2, false, false);
+    var th = results //results.threshold;
+    print("threshold", th)
+    
+    var water = i.gte(ee.Image.constant(th));
+    //var az = ee.Number(image.get('MEAN_SOLAR_AZIMUTH_ANGLE'));
+    //var zen = ee.Number(image.get('MEAN_SOLAR_ZENITH_ANGLE'));
+    //var cloudShadows = projectClouds(az, zen, clouds, cloudThreshold);
+    var mask = ee.ImageCollection(image.bandNames().map(function (b) {
+        return img.select([b]).mask().rename('mask');
+    })).product();
+    if (returnImage) {
+        return water.set('system:time_start', img.get('system:time_start')).set('nodata_pixels', ee.Dictionary(mask.not().reduceRegion(ee.Reducer.sum(), ee.Geometry(region), scale, null, null, false, 1e9)).values().get(0)).set('cloud_pixels', ee.Dictionary(cloudMask.reduceRegion(ee.Reducer.sum(), ee.Geometry(region), scale, null, null, false, 1e9)).values().get(0))
+        //.set('cloud_shadow_pixels', ee.Dictionary(cloudShadows.reduceRegion(ee.Reducer.sum(), analysisExtent, scale)).values().get(0))
+        //.set('snow_pixels', ee.Dictionary(cloudMask.reduceRegion(ee.Reducer.sum(), analysisExtent, scale, null, null, false, 1e9)).values().get(0)).set('water_threshold', th);
+    }
+    var waterVector = water.mask(water).reduceToVectors({ geometry: ee.Geometry(region), scale: errorMargin });
+    waterVector = filterToIntersection(waterVector, ee.Geometry(region));
+    return ee.FeatureCollection(waterVector.copyProperties(img)).set('system:time_start', img.get('system:time_start')).set('nodata_pixels', ee.Dictionary(mask.not().reduceRegion(ee.Reducer.sum(), ee.Geometry(region), scale, null, null, false, 1e9)).values().get(0)).set('cloud_pixels', ee.Dictionary(cloudMask.reduceRegion(ee.Reducer.sum(), ee.Geometry(region), scale, null, null, false, 1e9)).values().get(0))
+    //.set('cloud_shadow_pixels', ee.Dictionary(cloudShadows.reduceRegion(ee.Reducer.sum(), analysisExtent, scale)).values().get(0))
+    //.set('snow_pixels', ee.Dictionary(cloudMask.reduceRegion(ee.Reducer.sum(), analysisExtent, scale, null, null, false, 1e9)).values().get(0)).set('water_threshold', th);
+
+}
+
+
+
+var waterbody = detectwater(img, true);
+
+
+Map.addLayer(waterbody, {color: 'FF0000'}, 'colored');
+print(listOfImages.size())
