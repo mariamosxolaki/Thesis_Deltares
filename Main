@@ -1,0 +1,379 @@
+//Choose country/ies of study
+var countries = ee.FeatureCollection('USDOS/LSIB/2013');
+var country_names = countries.filter(ee.Filter.inList('name', [
+  'ANGOLA']));
+  
+var countryBounds = country_names.geometry().bounds().coordinates().get(0).getInfo()
+Map.centerObject(country_names.geometry());
+
+
+// Require script for Spatial Join
+var spatial_join = require('users/mamoscholaki/final_thesis:Spatial_Join2')
+
+//------------Input Datasets with unique feature ids -----------------------------------------------------------------------------------
+
+var Osm = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/OSM_singleparts')
+var Hydrolakes = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/Hydrolakes')
+var Grand = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/Grand')
+var Gsw = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/JRC_singleparts')
+var Sentinel = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/Sentinel_singleparts')
+
+
+
+
+//--------Completeness Analysis---------------------------------------------------------------------------------
+/*
+// Generate a Grid of 40 * 40km over the extend of the area of interest
+var grid = require('users/mamoscholaki/final_thesis:Grid')
+var Grid = grid.generateGrid(countryBounds, 0.4, 0.4).filterBounds(country_names);
+
+var Grid_with_id = Grid.map(function(i){
+  var ids = i.id()
+  return i.set('id',ids)
+} )
+
+//Visualize Grid
+var Grid_Vizualized = grid.addToMapAsRaster(Grid, 'grid (outline)', ['da9100 ', '00FFFF'], 1, 0.5, false, false);
+
+
+
+//Determine datasets 1 & 2
+var data1 = Osm
+var data2 = Grand
+
+
+var name1 = ee.String('osm')
+var name2 = ee.String('grand')
+var name_data1= ee.String('osm_no_grand')
+var name_data2= ee.String('grand_no_osm')
+var name_inter = ee.String('osm_and_grand')
+
+
+
+var cells = Grid.map(function(i){
+    //Clip datasets in extend of cell
+    var dataset1 = data1.filterBounds(i.geometry())
+    var dataset2 = data2.filterBounds(i.geometry())
+    // Perform spatial Join of datasets 1 & 2, which returns geometry of data1 with the feature_ids of overlapping features from data2
+    var joined= spatial_join.spatial_join(dataset1,dataset2);
+    var features = joined.filterBounds(i.geometry())
+    
+    //For spatially joined features: Computes area of intersection of data 1&2, missing area of data1 and data2
+    var inter = features.map(function(j){
+      var property2 = j.get('overlap_id');
+      var split = ee.String(property2).split(',');
+      var list_ids = ee.List(split)
+      var overlap_features_filtered = dataset2.filter(ee.Filter.inList('feature_id', list_ids))
+      var union_overlap_features = ee.FeatureCollection(overlap_features_filtered).union(ee.ErrorMargin(1))
+      var overlap_united = ee.Feature(union_overlap_features.first())
+      var intersection = ee.Feature(j).intersection(overlap_united,ee.ErrorMargin(1))
+      var area_inter = ee.Feature(intersection).geometry().area(ee.ErrorMargin(1));
+      var union = ee.Feature(overlap_united).union(ee.Feature(j))
+      var dif = union.difference(ee.Feature(overlap_united))
+      var dif2 = union.difference(ee.Feature(j))
+      var area_dif = dif.geometry().area(ee.ErrorMargin(1))
+      var area_dif2 = dif2.geometry().area(ee.ErrorMargin(1))
+      
+    return j.set('Inter', area_inter).set('dif1',area_dif).set('dif2',area_dif2)
+    });
+    
+    
+    var joined_area_inter = ee.Number(inter.aggregate_sum('Inter'));
+    var joined_area_dif1 = ee.Number(inter.aggregate_sum('dif1'));
+    var joined_area_dif2 = ee.Number(inter.aggregate_sum('dif2'));
+  
+  
+    //Finds missing reservoirs from dataset 1 that were not included in the spatially joined data
+    var joined_ids = joined.aggregate_array('feature_id').distinct()
+    var missing_data1 = dataset1.filter(ee.Filter.inList('feature_id',joined_ids).not())
+    //Find area of features for dataset 1 that don't intersect with dataset 2
+    var missing_area_data1 = missing_data1.map(function(j){
+      
+      var area = ee.Feature(j).geometry().area(ee.ErrorMargin(1))
+      return j.set('area',area)
+      
+    })
+    //Compute water area that was found only in dataset 1
+    var missing_area1 = ee.Number(missing_area_data1.aggregate_sum('area'))
+    //Compute total area for both missing and joined for dataset1
+    var total_missing_area1 = joined_area_dif1.add(missing_area1 )
+  
+  
+  
+    //Finds missing reservoirs from dataset 2 that were not included in the spatially joined data
+    var overlap_ids = joined.aggregate_array('overlap_id').distinct()
+    var missing_data2 = dataset2.filter(ee.Filter.inList('feature_id',overlap_ids).not())
+    //Find area of features for dataset 2 that don't intersect with dataset 1
+    var missing_area_data2 = missing_data2.map(function(k){
+      
+      var area = ee.Feature(k).geometry().area(ee.ErrorMargin(1))
+      return k.set('area',area)
+      
+    })
+  
+    //Compute water area that was found only in dataset 2
+    var missing_area2 = ee.Number(missing_area_data2 .aggregate_sum('area'))
+    //Compute total area for both missing and joined for dataset2
+    var total_missing_area2 = joined_area_dif2.add(missing_area2 )
+  
+  
+  
+    //Compute total area of Datasets 1 & 2
+    var area_1 = dataset1.map(function(y){
+       var area = ee.Feature(y).geometry().area(ee.ErrorMargin(1));
+    return y.set('area',area)
+    })
+    var total_area_1 = ee.Number(area_1.aggregate_sum("area"));
+    
+    var area_2 = dataset2.map(function(k){
+       var area = ee.Feature(k).geometry().area(ee.ErrorMargin(1));
+    return k.set('area',area)
+    })
+    var total_area_2 = ee.Number(area_2.aggregate_sum("area"));
+
+    
+          
+   return i.set(name1,total_area_1).set(name2,total_area_2).set(name_data1,total_missing_area1).set(name_data2,total_missing_area2).set(name_inter,joined_area_inter)
+});
+
+
+
+//----------------- Goodchild's Percentage of Overlap-------------------------------------------------------------------------------------------------
+
+/*
+
+//Determine datasets 1 & 2
+var dataset1 = Osm
+var dataset2 = Grand
+var joined= spatial_join.spatial_join(dataset1,dataset2)
+
+
+// Create a new FeatureCollection with geometry of dataset 1 and id information about one overlapping feature from dataset2 each time
+var duplicate = joined.map(function(i){
+  var geom = ee.Feature(i).geometry()
+  var overlap = i.get('overlap_id')
+  var split = ee.String(overlap).split(',')
+  var list_ids = ee.List(split)
+  //Mapping over List with overlapping feature ids
+  var flatten = list_ids.map(function(j){
+  
+    return ee.Feature(geom).copyProperties(ee.Feature(i),null,null).set('overlap_id',j)
+    })
+  
+  return ee.FeatureCollection(flatten)
+})
+
+//Flatten the new FeatureCollection
+var joined_flattened = duplicate.flatten()
+
+//Perform Goodchild's increasing buffers
+var buffers_goodchild = joined_flattened.map(function bufferscores(f){
+    // Find overlapping feature from dataset 2
+    var property2 = f.get('overlap_id');
+    var split = ee.String(property2).split(',')
+    var list_ids = ee.List(split)
+    
+    
+    var overlap_percentage = list_ids.map(function(j){
+      var feature2 = ee.Feature(dataset2.filter(ee.Filter.eq('feature_id', j)).first())
+      // Compute for different buffer zones the percentage of overlap between overlapping feature from dataset 1 and dataset 2
+      var buffers = ee.List.sequence(0, 150,10)
+      var bufferNames = ['0','10','20','30', '40', '50', '60', '70', '80', '90', '100', '110', '120', '130', '140', '150']
+      var test_buffer = buffers.map(function(n){
+        var buffered = f.buffer(ee.Number(n))
+        var intersection = buffered.intersection(feature2).area(ee.ErrorMargin(1))
+        var union = buffered.union(feature2).area(ee.ErrorMargin(1))
+        var score = intersection.divide(union)
+    return score
+    })
+    
+    var dict = ee.Dictionary.fromLists(bufferNames, test_buffer)
+    return dict
+      
+    })
+    var dict = ee.List(overlap_percentage).get(0)
+    var dict2 = ee.Dictionary(dict)
+    var keys = ee.List(dict2.keys())
+    var values = ee.List(dict2.values())
+    var max = values.reduce(ee.Reducer.max())
+    var maxind = values.indexOf(max)
+    var maxkey = keys.get(maxind)
+    var precision = ee.Number.parse(maxkey)
+    return f.set('goodchild',overlap_percentage).set('precision',precision).set('perc_overlap',max)
+   
+})
+*/
+
+//--------------------- Hausdorff Distance ---------------------------------------------------------------
+
+
+var data1 = Osm
+var data2 = Grand
+
+
+//Spatial Join Datasets 1&2 
+var joined= spatial_join.spatial_join(data1,data2);
+
+// Create a new FeatureCollection with geometry of dataset 1 and only info about 1 overlapping feature from dataset2 each time
+var duplicate = joined.map(function(i){
+  var geom = ee.Feature(i).geometry()
+  var overlap = i.get('overlap_id')
+  var split = ee.String(overlap).split(',')
+  var list_ids = ee.List(split)
+  //Mapping over List with overlapping feature ids
+  var flatten = list_ids.map(function(j){
+  
+    return ee.Feature(geom).copyProperties(ee.Feature(i),null,null).set('overlap_id',j)
+    })
+  
+  return ee.FeatureCollection(flatten)
+})
+
+var joined_flattened = duplicate.flatten()
+
+
+// Sampling Points algorithms
+var haus = require('users/mamoscholaki/final_thesis:Hausdorff');
+
+
+//Compute Hausdorff Distance of between features of Datasets 1& 2
+var hausdorff = joined_flattened.map(function(f){
+  //Sample points in polygon every 10 meters.
+  var sampleStepSize = 10;
+  //Projection scale
+  var scale = 10;
+  //Maximum number of vertices for the Euclidean Distance Map.
+  var maxVerticesPerPolygon = 500;
+  var error = ee.ErrorMargin(scale, "meters");
+  var geom = f.geometry();
+  var amount =  ee.List(geom.coordinates().get(0)).size().multiply(ee.Number(scale)).min(maxVerticesPerPolygon);
+  // Sample Points for Euclidean Distance Map of feature from dataset 1
+  var points1 = haus.GeneratePoints(geom, amount, error);
+  
+  //Paint sampled points of feature from dataset 1 onto an Image
+  var points1a = ee.Image(0).float().paint(points1, 1);
+  // Create Euclidean Distance Transform
+  var distance = points1a.fastDistanceTransform().sqrt().multiply(ee.Image.pixelArea().sqrt()).clip(ee.Feature(geom).buffer(10000)).rename("distance")
+  
+  // Select overlapping feature from dataset 2
+  var property2 = f.get('overlap_id');
+  var split = ee.String(property2).split(',')
+  var list_ids = ee.List(split)
+  var feature2 = ee.Feature(ee.FeatureCollection(data2.filter(ee.Filter.inList('feature_id', list_ids))).first())
+  
+  // Put points of feature froom dataset 2 into a line string
+  var linestring_collection = ee.FeatureCollection(haus.linestring(feature2));
+  var point_collection = linestring_collection .map(function(feature){ 
+  //Sample line Points along geometry from of feature from dataset 2 and merge into one collection
+  var pointsSampled = haus.sampleLinePoints(feature.geometry(ee.ErrorMargin(scale, "meters")), sampleStepSize);
+  
+  return pointsSampled;
+}).flatten();
+
+  var number_of_points = ee.Number(point_collection.size()).subtract(2);
+  var pointList = point_collection.toList(point_collection.size());
+  var offset = ee.List.sequence(0, number_of_points).iterate(function(n, list) 
+   {
+    var index = ee.Number(n);
+    n = ee.Number(n).multiply(sampleStepSize);
+    var previous = ee.Feature(pointList.get(index)).set("offset", n);
+    return ee.List(list).add(previous);
+   }, ee.List([]));
+  
+  var collection = ee.FeatureCollection(ee.List(offset));
+ 
+ // Compute Euclidean Distances for all sampled points for feature from dataset 2, by overlapping with Euclidean Distance Transfrom Map of feature from dataset 1
+  var pointsDistanceCollection = collection.map(function(feature)
+  {
+    var sample = distance.reduceRegion(ee.Reducer.mean(), feature.geometry(error), scale);
+    //var li = ee.FeatureCollection(f).toList(1)
+    //var intersects = ee.Feature(li.get(0)).intersects(feature, ee.ErrorMargin(1));
+    //var direction = ee.String(ee.Algorithms.If(intersects, 'INSIDE', 'OUTSIDE'));
+    return feature.set('pointDistance',sample.values().get(0));
+                
+  });
+  //print(pointsDistanceCollection)
+  //Compute mode,mean, max Euclidean  for each point primitive for feature from dataset 2
+  
+  var property = ['pointDistance'] ;
+  var max = pointsDistanceCollection.reduceColumns({
+      reducer: ee.Reducer.max(),
+      selectors: property
+    }); 
+   
+  var mode = pointsDistanceCollection.reduceColumns({
+      reducer: ee.Reducer.mode(),
+      selectors: property
+    }); 
+  var mean = pointsDistanceCollection.reduceColumns({
+      reducer: ee.Reducer.mean(),
+      selectors: property
+    }); 
+   var median = pointsDistanceCollection.reduceColumns({
+    reducer: ee.Reducer.median(),
+    selectors: property
+  });
+  
+   var std = pointsDistanceCollection.reduceColumns({
+    reducer: ee.Reducer.stdDev(),
+    selectors: property
+  });
+  
+  //Now perform Backwards: 
+  var points_2geom = feature2.geometry();
+  var amount2 =  ee.List(points_2geom.coordinates().get(0)).size().multiply(ee.Number(scale)).min(maxVerticesPerPolygon);
+  // Sample Points for Euclidean Distance Map of feature from dataset 2
+  var points2 = haus.GeneratePoints(points_2geom, amount2, error)
+  
+  //Paint sampled points of feature from dataset 2 onto an Image
+  var points2a= ee.Image(0).float().paint(points2, 1);
+  // Create Euclidean Distance Transform for feature from dataset 2
+  var distance2 = points2a.fastDistanceTransform().sqrt().multiply(ee.Image.pixelArea().sqrt()).clip(ee.Feature(points_2geom).buffer(10000)).rename("distance2");
+  // Compute Euclidean Distances for all sampled points for feature from dataset 1, by overlapping with Euclidean Distance Transfrom Map of feature from dataset 2
+  var pointsDistanceCollection2 = points1.map(function(feature){
+    var sample = distance2.reduceRegion(ee.Reducer.mean(),feature.geometry(error),scale)
+    //var li = ee.FeatureCollection(f).toList(1)
+    //var intersects = ee.Feature(li.get(0)).intersects(feature, ee.ErrorMargin(1));
+    //var direction = ee.String(ee.Algorithms.If(intersects, 'INSIDE', 'OUTSIDE'));
+    return feature.set('pointDistance', sample.values().get(0));
+                
+  });
+  //Compute mode,mean, max Euclidean  for each point primitive for feature from dataset 1
+  var max2 = pointsDistanceCollection2.reduceColumns({
+      reducer: ee.Reducer.max(),
+      selectors: property
+    }); 
+   
+  var mode2 = pointsDistanceCollection2.reduceColumns({
+      reducer: ee.Reducer.mode(),
+      selectors: property
+    }); 
+  var mean2 = pointsDistanceCollection2.reduceColumns({
+      reducer: ee.Reducer.mean(),
+      selectors: property
+    }); 
+   var median2 = pointsDistanceCollection2.reduceColumns({
+    reducer: ee.Reducer.median(),
+    selectors: property
+  });
+  
+  var std2 = pointsDistanceCollection2.reduceColumns({
+    reducer: ee.Reducer.stdDev(),
+    selectors: property
+  });
+  
+  //Compute Hausdorff Distance between feature from dataset 1 and overlapping feature from dataset 2
+  var hausdorff_final = ee.Number(mean.get('mean')).add(ee.Number(mean2.get('mean'))) 
+  var Max = max.getNumber('max')
+  var Mean = mean.getNumber('mean')
+  var Mode = mode.getNumber('mode')
+  var Median = median.getNumber('median')
+  
+  return f.set('Hausdorff',hausdorff_final).set('Mean',Mean).set('Mode',Mode).set('Median', Median)
+});
+
+print(hausdorff.limit(1))
+
+//----------------------------------------------------------------------------------------------------------------------------------------
+
+
