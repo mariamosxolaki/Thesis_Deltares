@@ -1,0 +1,19 @@
+// Output Datasets from Main Analysis
+
+var Goodchild_osm_and_hydro = ee.FeatureCollection('users/mamoscholaki/Goodchild/Good_osm_hydro')
+var Goodchild_osm_and_grand = ee.FeatureCollection('users/mamoscholaki/Goodchild/good_osm_grand')
+var Goodchild_osm_and_sentinel= ee.FeatureCollection('users/mamoscholaki/Goodchild/Good_osm_sentinel')
+var Goodchild_osm_and_jrc = ee.FeatureCollection('users/mamoscholaki/Goodchild/Good_osm_jrc')
+
+
+var Hausdorff_osm_and_hydro = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/haus_oh')
+var Hausdorff_osm_and_grand = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/haus_og')
+var Hausdorff_osm_and_sentinel = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/haus_sentinel')
+var Hausdorff_osm_and_jrc = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/haus_jrc')
+
+
+
+var Completeness_osm_and_hydro = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/compl_oh')
+var Completeness_osm_and_grand = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/compl_og')
+var Completeness_osm_and_sentinel = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/compl_osentinel')
+var Completeness_osm_and_jrc = ee.FeatureCollection('users/mamoscholaki/P5_Datasets/compl_ojrc')
