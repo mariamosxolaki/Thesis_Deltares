@@ -1,0 +1,56 @@
+// Computes pairwise spatial join between datasets and finds overlapping polygons, keeps record of feature ids of overlapping features 
+//The returned FeatureCollection has the geometry info of dataset1 (geom1)
+
+//Finds which reservoirs intersect 
+function spatial_join(geom1,geom2){
+  // Define a spatial filter as geometries that intersect.
+  var spatialFilter = ee.Filter.intersects({
+    leftField: '.geo',
+    rightField: '.geo',
+    maxError: 10
+  });
+  // Define a save all join.
+  var saveAllJoin = ee.Join.saveAll({
+    matchesKey: 'intersecting_water_reservoirs',
+  });
+  // Apply the join.
+  var overlap = saveAllJoin.apply(geom1, geom2, spatialFilter);
+  overlap = overlap.map(function(i){
+    var len = ee.List(i.get('intersecting_water_reservoirs')).length()
+    //Make Collection of overlapping features from dataset 2 based on their ids 
+    var features = ee.FeatureCollection(ee.List(i.get('intersecting_water_reservoirs')))
+    var geom1_id = features.aggregate_array('feature_id')
+    // Iterate over each element of ID list and create a concatenates string
+    var stringID = geom1_id.iterate(function(c, p) {
+    return ee.String(p).cat(ee.String(c).cat(','))
+  }, ee.String(''));
+  var feat_geometry = ee.Feature(i).geometry()
+  var new_feature = ee.Feature(feat_geometry).copyProperties(ee.Feature(i),null,['intersecting_water_reservoirs'])
+  return new_feature.set('overlap_id',stringID).set('length',len)
+  })
+  return ee.FeatureCollection(overlap)
+}
+ 
+
+
+function intersecting_reservoirs(geom1,geom2){
+  // Define a spatial filter as geometries that intersect.
+  var spatialFilter = ee.Filter.intersects({
+    leftField: '.geo',
+    rightField: '.geo',
+    maxError: 10
+  });
+  // Define a save all join.
+  var saveAllJoin = ee.Join.saveAll({
+    matchesKey: 'intersecting water reservoirs',
+  });
+  // Apply the join.
+  var overlap = saveAllJoin.apply(geom1, geom2, spatialFilter);
+  
+  return overlap
+  
+} 
+
+
+exports.spatial_join = spatial_join
+exports.intersecting_reservoirs = intersecting_reservoirs
