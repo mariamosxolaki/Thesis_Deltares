@@ -1,0 +1,66 @@
+/*
+Reference:  
+
+J.J.M. THISSEN, AUTOMATING SURFACE WATER DETECTION FOR RIVERS
+https://github.com/JThissen/Automating-surface-water-detection-for-rivers/blob/master/ThesisScripts/RiverGeometryEstimate.js
+(2020)
+*/
+
+
+
+
+function GeneratePoints(geom, stepSize, errorMargin)
+{
+  var peri = geom.perimeter(errorMargin);
+  var lineString = ee.Algorithms.GeometryConstructors.MultiLineString(geom.coordinates());
+  var distances = ee.List.sequence(0, peri, peri.divide(stepSize));
+  var feature = ee.Feature(lineString).set({distanceList: distances}).set({distanceLength: distances.length()});
+  distances = feature.get("distanceList");
+  var segments = feature.geometry().cutLines(distances, errorMargin).geometries();
+  var result = segments.map(function(i)
+  {
+    return ee.Feature(ee.Geometry(i).centroid(errorMargin));
+  });
+  return ee.FeatureCollection(result);
+}
+
+
+function sampleLinePoints(lineString, step) 
+{
+  var scale = 10
+  var length = lineString.length(ee.ErrorMargin(scale, "meters"));
+  step = ee.Algorithms.If(ee.Number(length).lte(ee.Number(step)), ee.Number(length), ee.Number(step));
+  var distances = ee.List.sequence(0, length, step);
+
+  function makePointFeature(coord, offset) {
+    var pt = ee.Algorithms.GeometryConstructors.Point(coord).buffer(5, ee.ErrorMargin(scale, "meters"));
+    return new ee.Feature(pt).set('offset', offset);
+  }
+  
+  var lines = lineString.cutLines(distances, ee.ErrorMargin(scale, "meters")).geometries();
+  
+  var points =   lines.zip(distances).map(function(s) {
+    var line = ee.List(s).get(0);
+    var offset = ee.List(s).get(1);
+    return makePointFeature(ee.Geometry(line).coordinates().get(0), offset);
+  });
+  points = points.add(makePointFeature(lineString.coordinates().get(-1), length));
+
+  return new ee.FeatureCollection(points);
+}
+
+function linestring(test2){
+  
+  var list_sublists = (test2.geometry().coordinates()).get(0)
+  var lstring = ee.Geometry.LineString(list_sublists)
+  return lstring
+  
+}
+
+
+
+
+
+exports.GeneratePoints = GeneratePoints
+exports.sampleLinePoints = sampleLinePoints
+exports.linestring = linestring
