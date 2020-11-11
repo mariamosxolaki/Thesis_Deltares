@@ -1,0 +1,56 @@
+/*
+Reference: Gennaddi Donchyts
+*/
+
+
+
+//Generates a grid of dx*dy size over the given bounds
+function generateGrid(bounds, dx, dy) {
+  var lon_start = bounds[0][0];
+  var lon_end = bounds[1][0];
+  var lat_start = bounds[0][1];
+  var lat_end = bounds[2][1];
+  
+  var polys = [];
+  for (var lon = lon_start; lon < lon_end; lon += dx) {
+    var x1 = lon - dx/2;
+    var x2 = lon + dx/2;
+    for (var lat = lat_start; lat < lat_end; lat += dy) {
+      var y1 = lat - dy/2;
+      var y2 = lat + dy/2;
+      polys.push(ee.Geometry.Rectangle(x1, y1, x2, y2));
+    }
+  }
+  print("Cell count: " + polys.length)
+
+  return ee.FeatureCollection(polys);
+}
+
+// Adds vectors as rasters to map
+function addToMapAsRaster(shapes, name, palette, width, opacity, filled, visible) {
+  var outline = width;
+  var img; 
+  
+  if (filled) {
+    img = ee.Image().toByte();
+    img = img.paint(shapes, 1); // paint fill
+    img = img.paint(shapes, 0, outline + 1); // paint outline
+  } else {
+    img = ee.Image(0).mask(0);
+    img = img.paint(shapes, 0, width);
+  }
+
+  var options = {
+    palette: palette,
+    max: 1,
+    opacity: opacity
+  };
+
+  Map.addLayer(img, options, name, visible);
+
+  return img;
+}
+
+
+exports.generateGrid = generateGrid
+exports.addToMapAsRaster = addToMapAsRaster
