@@ -1,0 +1,183 @@
+//Choose extent of analysis by loading  country boundary from the Large Scale International Boundary dataset.
+var countries = ee.FeatureCollection('USDOS/LSIB/2013');
+var country_names = countries.filter(ee.Filter.inList('name', [
+  'ANGOLA']));
+//Create a geometry for the area of interest
+var countryBounds = country_names.geometry().bounds().coordinates().get(0).getInfo()
+Map.centerObject(country_names.geometry());
+
+
+
+// Generate a Grid of 1 * 1 km over the extend of the area of interest
+var grid = require('users/mamoscholaki/final_thesis:Grid')
+var Grid = grid.generateGrid(countryBounds, 1, 1).filterBounds(country_names);
+
+var Grid_with_id = Grid.map(function(i){
+  var ids = i.id()
+  return i.set('id',ids)
+} )
+
+//Visualize Grid
+var Grid_Vizualized = grid.addToMapAsRaster(Grid, 'grid (outline)', ['da9100 ', '00FFFF'], 1, 0.5, false, false);
+
+//-----------------------------------------------------------------------------------------------------------------------------------------------------------
+
+// Generation of Sentinel 2 vector Dataset
+// Was perfomed semi automatically with intermediate exports and imports of the data 
+
+
+// Offers access to functions for the generation of Sentinel 2 water dataset 
+var Sentinel2_functions = require('users/mamoscholaki/final_thesis:Sentinel2');
+
+// Creates list with the ids of all grid cells over the extend of study area
+var gridList = ee.List(Grid_with_id.aggregate_array('id')).getInfo();//get info retrieves values from server
+
+/*
+//Computes and exports per cell the surface water image
+var cells = gridList.map(function(j){
+  
+  //Define processing parameters
+  var scale = 30;
+  var errorMargin = Map.getScale();
+  var cell= Grid_with_id.filterMetadata('id', 'equals',j).first()
+  var region = ee.Feature(cell).geometry()
+  
+  //Load Sentinel 2 TOA image (use 1 or two year period)
+  var images = ee.ImageCollection('COPERNICUS/S2').filterDate('2019-01-01','2020-01-01').filterBounds(region);
+
+  
+  //Resample bands 
+  images = images.map(function(i){
+    var resample = i.resample('bicubic')
+    return resample
+  });
+  
+  
+  //Get most clean images 
+  var myCollection = Sentinel2_functions.getMostlyCleanImages(images, region, {
+   cloudFrequencyThresholdDelta: 0 })
+  
+  //Compute the 20th percentile of reflectance values in all clean images
+  var perc = myCollection.reduce(ee.Reducer.percentile([20]));
+  
+ // Calculate Modified Water Index
+  var mndwi = perc.normalizedDifference(['B3_p20', 'B11_p20']).rename('MNDWI');
+  
+  // Creates MNDWI Image
+  var new_image=ee.Image(mndwi)
+  new_image = new_image.mask(new_image)
+  
+  var  cellID = j
+  var file = 'Sentinel-'+ cellID
+  var folder = 'Sentinel' 
+  
+  
+  Export.image.toAsset({
+    image: new_image,
+    description: file,
+    assetId: folder+'/'+file,
+    scale: 30,
+    region: region,
+  });
+  return j
+  
+})
+
+
+// To run all cells and perform batch export in GEE see: https://github.com/gee-hydro/gee_monkey
+
+// Import all images and  Merge all Images in one Image  with function : 
+// var new_image = ImageCollection.mosaic()
+
+//Compute buffered edges
+var water_edges = Sentinel2_functions.edges(new_image)
+
+// Perform Closing Morphological operation
+var edgeBuffer = water_edges.focal_max(ee.Number(scale).multiply(1), 'square', 'meters');
+
+//Create image that describes the buffered edges 
+var imageEdge = new_image.mask(edgeBuffer);
+
+// Create Histogra from MNDWI values in buffered edges image
+var histogram = ee.Dictionary(imageEdge.reduceRegion({
+reducer: ee.Reducer.histogram(100),
+geometry: region, 
+scale: 90,
+bestEffort: true
+}).get('MNDWI'));
+
+//Compute threshold from this histogram based on Otsu Thresholding
+var threshold = Sentinel2_functions.otsu(histogram);
+
+
+// Choose water mask only greater than the Threshold value
+var waterMask = mndwi.gte(ee.Image.constant(threshold));
+var vector = waterMask.mask(waterMask)
+
+
+//Compute vector of Sentinel 2 surface water
+var SentinelVector = vector.reduceToVectors({
+    geometry:region,
+    scale: scale,
+    tileScale: 16,
+    maxPixels: 1e13
+}).map(function(g) { return g.simplify(60) });  
+
+//Export Vector to table
+Export.table.toAsset({
+collection: SentinelVector, 
+description: 'Sentinel-waterbodies', 
+assetId: '' + ''
+})
+
+
+// Import exported Sentinel Vector dataset and create distinct Ids for each feature
+var Sentinel_2 = sentinel.map(function(i){
+          var id = ee.String(i.id())
+          var string =  id.cat('_sent')
+          return i.set('feature_id', string )
+})
+
+
+*/
+//-------------------------------------------------------------------------------------------------------------------------------
+//Generation of GLobal Surface Water Vector Dataset
+var jrc = require('users/mamoscholaki/Deltares_Thesis:Global_Surface_Water')
+
+//Create and export per cell over entire Angola water vectors based on GSW
+var cells = gridList.map(function(j){
+  var cell= Grid_with_id.filterMetadata('id', 'equals',j).first()
+  var region = ee.Feature(cell)
+  var JRC_country = jrc.Occurrence().clip(region);
+  var JRC = jrc.JRC(JRC_country,region)
+  var JRC_vector = jrc.JRC_Vector(JRC,region)
+  
+  var  cellID = j
+  var file = 'JRC-'+ cellID
+  var folder = 'JRC' 
+  
+  Export.table.toDrive({
+    collection: JRC_vector,
+    description: file,
+    fileFormat: 'SHP'
+});
+
+  return j
+  
+})
+
+
+// To run all cells and perform batch export in GEE see: https://github.com/gee-hydro/gee_monkey
+
+// Import exported vectors, merge in one FeatureCollection and create distinct Ids for each feature
+
+var GSW = JRC.map(function(i){
+          var id = ee.String(i.id())
+          var string =  id.cat('_JRC')
+          return i.set('feature_id', string )
+})
+
+//------------------------------------------------------------------------------
+
+
+
