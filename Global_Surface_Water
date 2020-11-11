@@ -1,0 +1,50 @@
+// Generates JRC Global Surface Water waterbody
+
+
+function Occurrence(){
+  var gsw = ee.Image('JRC/GSW1_0/GlobalSurfaceWater')
+  var occurrence = gsw.select('occurrence')
+  return occurrence
+  
+}
+
+
+
+function JRC(occurr,cell){
+  var occurrence = occurr.gt(10);
+  occurrence = ee.Image(occurrence.divide(100).resample('bicubic').clip(cell.geometry()))
+  // Masking part of the image and making them transparent, removing them from the analysis
+  // Pixels with vaue 0 in mask (image2) will be made transparent in occurrence (image1)
+  var mask = occurrence.mask();
+  //Perform closing operation 
+  mask = mask.focal_mode(35, 'circle', 'meters', 3);
+  occurrence = occurrence.mask(mask);
+  // Create constant image of 1 values 
+  var vector = ee.Image(1).mask(occurrence.mask())
+  return vector
+} 
+
+
+
+function JRC_Vector(vector,cell){
+  var gsw = ee.Image('JRC/GSW1_0/GlobalSurfaceWater');
+  var occurrence = gsw.select('occurrence');
+  var scale = 30;
+  //the choosen max  error in simplify must be a bit bigger than the scale  (times 2 for example)
+  //tilescale is the zoom in practically 
+  var JRCVector = vector.reduceToVectors({
+    geometry:cell.geometry(),
+    crs: occurrence.projection(),
+    scale: scale,
+    tileScale: 16,
+    maxPixels: 1e13
+}).map(function(g) { return g.simplify(60) });
+  
+  return JRCVector
+  
+}
+
+
+exports.JRC = JRC
+exports.JRC_Vector = JRC_Vector
+exports.Occurrence = Occurrence
